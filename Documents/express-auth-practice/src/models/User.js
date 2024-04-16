@@ -21,11 +21,17 @@ const User = sequelize.define('User', {
         defaultValue: false
     },
     // propiedad/column para activar/desactivar 2FA (para activarla is_admin debe ser TRUE).
-  //  two_factor_authentication: {
-   //     type: DataTypes.BOOLEAN,
-   //     allowNull: true,
-   //     defaultValue: false
-   // },
+    two_factor_authentication: {
+        type: DataTypes.BOOLEAN,
+        allowNull: true,
+        defaultValue: false
+    },
+    // aqui deberia ir una column de secret para autenticar al usuario con su otp y que siempre utilize el mismo secreto,
+    // y que este este guardado en el servidor y no tenga que ser enviado con la solicitud (POST).
+    otp_secret: {
+        type: DataTypes.STRING,
+        unique: true
+    },
 });
 
 //User.hasMany(Products) <- if you want to describe User and get the products that belong to a specific user.

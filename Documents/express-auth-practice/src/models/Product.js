@@ -52,10 +52,10 @@ const Product = sequelize.define('Product', {
         allowNull: false
     },
     // link de imagen va en cloudinary.
-  //  image: {
-   //     type: DataTypes.STRING,
-    //    allowNull: true
-   // },
+    image: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
     createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

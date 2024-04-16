@@ -7,6 +7,8 @@ const LocalStrategy = require('passport-local').Strategy;
 const ExtractJwt = require('passport-jwt').ExtractJwt;
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 
 //models:
 const User = require('./models/User');
@@ -61,34 +63,9 @@ async function sendMail(transporter, to, subject, message) {
     }
 };
 
-//real gmail
-app.get('/realmail', async(req, res) => {
-    const mailOptions = {
-        from: 'oliver125125@gmail.com',
-        to: 'oliver125125@gmail.com',
-        subject: 'Test Email',
-        text: 'This is a test email sent from Nodemailer using Gmail.'
-    };
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: 'oliver125125@gmail.com',
-            pass: 'aiyp fvhl djxd rjny'
-        }
-    });
-    transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-            console.log(error);
-            res.status(500).send('Failed to send email');
-        } else {
-            console.log(`Email sent to: ${info.response}`);
-            res.send('Email sent successfully');
-        }
-    });
-});
-
+//2FA 
 //middleware para ver revisar si es que usuario (un admin) tiene activado 2FA.
-function requireTwoFactorAuthentication(req, res, next) {
+async function requireTwoFactorAuthentication(req, res, next) {
     // speakksy.generateSecret();
     // verificar si is_admin es TRUE en User model
     // si no lo es, entonces return next()
@@ -96,7 +73,128 @@ function requireTwoFactorAuthentication(req, res, next) {
     //luego crear ruta para activar y desactviar
     // crear ruta para verificar codigo
     // este utiliza google authenticator
+    const userId = req.user.userId
+    try {
+        const user = await User.findByPk(userId)
+        if (userId && user.is_admin && user.two_factor_authentication) {
+            // if user is admin then require them to verify their their otp
+            // now ask for their otp
+        } else {
+            return next();
+        }
+    } catch (error) {
+        
+    }
 };
+
+// RUTA PARA DEBUGGING. utilizar otp_secret column
+app.post('/verify', isAuthenticated, async (req, res) => {
+    const { otp } = req.body;
+    if (!otp) {
+        return res.status(400).json('Faltan datos');
+    }
+    
+    const userId = req.user.userId;
+    try {
+        const user = await User.findByPk(userId);
+        if (!user) {
+            return res.status(404).json('Usuario no encontrado');
+        }
+        
+        const verified = speakeasy.totp.verify({
+            secret: user.otp_secret, // va a vericar con la column otp_secret.
+            encoding: 'base32',
+            token: otp,
+            window: 2
+        });
+        
+        if (verified) {
+            return res.json({ verified: true });
+        } else {
+            return res.status(400).json({ verified: false });
+        }
+    } catch (error) {
+        console.error('Error verifying OTP:', error);
+        res.status(500).json('Internal Server Error');
+    }
+});
+
+
+
+//ruta para generar secret key. Se puede utilizar codigo para agregar manualmente en caso de no poder escanear QR.
+app.get('/generate-secret', isAuthenticated, isAdmin, async (req, res) => {
+    const userId = req.user.userId; 
+    
+    try {
+        
+        const user = await User.findOne({where: {id: userId}});
+        if (user.otp_secret) {return res.status(400).json('Ya has creado tu secreto anteriormente.')};
+
+        const secret = speakeasy.generateSecret();
+
+        await user.update({otp_secret: secret.base32});
+
+        res.json({secret: secret.base32});
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error.message}`);
+    }
+});
+
+//generar codigo QR para agregarlo a la app.
+app.post('/generate-qr-code', (req, res) => {
+    const secret = req.body.secret;
+    if (!secret) {return res.status(400).json('Faltan datos')};
+
+    const otpAuthUrl = speakeasy.otpauthURL({secret, label: 'MyApp'});
+    QRCode.toDataURL(otpAuthUrl, (error, imageUrl) => {
+        if (error) {
+            res.status(500).send('Error generating QR code');
+        } else {
+            res.send(`<img src="${imageUrl}" alt="QR Code">`);
+        }
+    })
+});
+/*
+// ruta para verificar codigo.
+app.post('/verify-otp', (req, res) => {
+    const {secret, otp} = req.body;
+    if (!secret || !otp) {return res.status(400).json('Faltan datos')};
+    
+    const verified = speakeasy.totp.verify({
+        secret: secret,
+        encoding: 'base32',
+        token: otp,
+        window: 2
+    });
+    if (verified) {
+        return res.json({verified: true})
+    } else {
+        return res.status(400).json({verified: false})
+    }
+}); */
+
+//ruta para que usuarios admin puedan activar 2FA.
+app.put('/2fa/activate', isAuthenticated, isAdmin, async(req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const user = await User.findByPk(userId);
+        if (!user) {return res.status(404).json('No existe usuario')}; // el usuario deberia existir siempre.
+        if (user && user.two_factor_authentication) {
+            return res.status(400).json('Ya tienes 2FA activado')
+        } else {
+            await user.update({
+                two_factor_authentication: true // <-- Esto luego se debe utilizar para requerir a los usuarios ingrear su OTP.
+            })
+        };
+        res.json('2FA activado con exito')
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
 
 function isAuthenticated(req, res, next) {
     const token = req.headers.authorization && req.headers.authorization.split(' ')[1]; // <- what is this doing?
@@ -314,8 +412,8 @@ app.get('/test/admin', isAuthenticated, isAdmin, (req, res) => {
 });
 
 // loggearse
-app.post('/login', async (req, res) => {
-    const username = req.body.username;
+app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y TIENE 2FA ACTIVADO ENTONCES REQUERIR OTP.
+    const username = req.body.username;  // tambien se puede solicitar otp para eliminar usuario, producto, etc.
     const password = req.body.password;
 
     try {
@@ -1123,7 +1221,7 @@ app.post('/products/user/favorites', isAuthenticated, async (req, res) => {
 
 
 const PORT = 3001
-sequelize.sync({alter: false}).then(() => { // <- alter and force set to false.
+sequelize.sync({alter: true}).then(() => { // <- alter and force set to false.
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     })
