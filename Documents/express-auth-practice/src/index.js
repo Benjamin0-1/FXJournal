@@ -158,24 +158,6 @@ app.post('/generate-qr-code', isAuthenticated, (req, res) => {
         }
     })
 });
-/*
-// ruta para verificar codigo.
-app.post('/verify-otp', (req, res) => {
-    const {secret, otp} = req.body;
-    if (!secret || !otp) {return res.status(400).json('Faltan datos')};
-    
-    const verified = speakeasy.totp.verify({
-        secret: secret,
-        encoding: 'base32',
-        token: otp,
-        window: 2
-    });
-    if (verified) {
-        return res.json({verified: true})
-    } else {
-        return res.status(400).json({verified: false})
-    }
-}); */
 
 //ruta para que usuarios admin puedan activar 2FA.
 app.put('/2fa/activate', isAuthenticated, isAdmin, async(req, res) => {
@@ -204,6 +186,10 @@ function isAuthenticated(req, res, next) {
     if (!token) {
         return res.status(401).json({ message: 'No token provided.' });
     }
+
+  //  if (isTokenBanned(token)) {
+  //      return res.status(403).json({ message: 'Token has been banned' });
+  //  }
 
     jwt.verify(token, 'access-secret', (error, decoded) => {
         if (error) {
@@ -279,7 +265,7 @@ app.post('/reset-password-request', isAuthenticated, async (req, res) => {
 app.post('/reset-password', isAuthenticated, async (req, res) => {
     const userId = req.user.userId;
     const resetToken = req.body.resetToken;
-    
+
     const newPassword = req.body.newPassword;
     const confirmNewPassword = req.body.confirmNewPassword;
 
@@ -441,6 +427,38 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         res.json({ message: 'Login successful', accessToken, refreshToken });
     } catch (error) {
         return res.status(500).json({ message: 'Internal Server Error.' });
+    }
+});
+
+//LOGOUT ROUTE. Falta arreglar
+app.post('/logout', isAuthenticated, async(req, res) => {
+    const accessToken = req.headers.authorization && req.headers.authorization.split(' ')[1]; // Extract access token
+    const refreshToken = req.body.refreshToken;
+
+    console.log(`Access Token: ${accessToken}`);
+    console.log(`Refresh Token: ${refreshToken}`);
+
+    try {
+        if (!refreshToken) {
+            return res.status(400).json('Debe incluir refresh token');
+        }
+       // accessToken.replace(''); remove access token from the user.
+        
+        // Verify refresh token
+        jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
+            if (error) {
+                return res.status(401).json({ message: 'Invalid refresh token.' });
+            }
+            
+            // Both tokens are valid, ban them
+            await BannedToken.create({ token: accessToken });
+            await BannedToken.create({ token: refreshToken });
+
+            // Send response after both tokens are banned
+            res.json({ logOutSuccessful: true, message: 'Logout successful' });
+        });
+    } catch (error) {
+        return res.status(500).json({ error: 'Internal server error', error });
     }
 });
 
@@ -688,7 +706,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             product, 
             stock, 
             rating, 
-            price, // Include price here
+            price, 
             description, 
             brand, 
             tags, 
@@ -700,7 +718,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
         } = req.body;
 
         const userId = req.user.userId; // Extract userId from the decoded JWT token
-
+        // no se debe agregar review al producto a la hora de crearlo, esa es tarea de los usuarios.
         // check that brandId exists.
 
         // Create the product with the provided attributes and userId
@@ -709,7 +727,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             product,
             stock,
             rating,
-            price, // Include price
+            price, 
             description,
             brand,
             tags,
@@ -732,7 +750,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             await createdProduct.addCategories(categories);
         }
 
-        //SEND EMAIL
+        //SEND EMAIL. Al crear un producto TODOS los usuarios recibiran un correo con el nombre del nuevo producto agreagdo.
         const transporter = await initializeTransporter();
         const users = await User.findAll();
         for (const user of users) {
@@ -753,8 +771,8 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
 
 //REPORTES: 
 
-// make sure a user can only port it ONCE.
-//ruta para que usuarios puedan reportar un producto. (por id)
+
+//ruta para que usuarios puedan reportar un producto. (por id). Un usuario puede reportar un producto una sola vez.
 app.post('/products/report/id', isAuthenticated, async(req, res) => {
     const userId = req.user.userId;
     const productId = req.body.productId;
@@ -788,7 +806,37 @@ app.post('/products/report/id', isAuthenticated, async(req, res) => {
 });
 
 //ruta para que usuarios puedan reportar un producto. (por nombre)
-app.post('/products/report/name', isAuthenticated, async(req, res) => {});
+app.post('/products/report/name', isAuthenticated, async(req, res) => {
+    const userId = req.user.userId;
+    const productName = req.body.productName;
+    if (!productName) {return res.status(400).json('Debe incluir el nombre del producto')};
+
+    console.log(`User id: ${userId}`);
+
+    try {
+        const existingProduct = await Product.findOne({
+            where: {product: productName}
+        });
+        if (!existingProduct) {return res.status(404).json({message: `Producto ${productName} no existe`, productNotExists: true})};
+
+        const existingReport = await ReportedProduct.findOne({
+            where: {
+                productId: existingProduct.id,
+                userId: userId
+            }
+        });
+        if (existingReport) {return res.status(400).json(`Ya has reportado este producto con nombre: ${productName}`)};
+
+        const newReport = await ReportedProduct.create({
+            productId: existingProduct.id,
+            userId
+        });
+        res.status(201).json(`Producto con nombre: ${productName} reportado con exito`);
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
 
 // obtener TODOS los productos
 app.get('/allproducts', async (req, res) => {
@@ -837,7 +885,7 @@ app.get('/category/:name', async(req, res) => {
 app.get('/searchproduct/:productname', async(req, res) => {
     const productname = req.params.productname;
     if (!productname) {return res.status(400).json('Missing product name')};
-    if (productname.length < 50) {return res.status(400).json('Product name is too long')};
+    if (productname.length > 50) {return res.status(400).json('Product name is too long')};
 
     try {
         const products = await Product.findAll({
@@ -1010,7 +1058,7 @@ app.get('/products/alphorder', async(req, res) => {
     }
 });
 
-// ruta para buscar producto especifico por su nombre.
+// ruta para buscar producto especifico por su nombre. 
 app.get('/search/product/:name', async(req, res) => {
     const name = req.params.name;
     if (!name || name.length > 90) {return res.status(400).json('Introduzca un nombre valido')};
@@ -1162,10 +1210,6 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
     }
 });
 
-
-// ruta para filtrar por categoria (devuelvo todos los productos que entran en la categoria ingresada(podria ser mas de uno))
-app.get('/products/category/:categoryname', async(req, res) => {});
-
 // ruta para que admins puedan enviar email masivos a todos los usuarios registrados.
 app.post('/send-email-to-all-users', isAuthenticated, isAdmin, async(req, res) => {
     const {subject, message} = req.body;
@@ -1248,7 +1292,7 @@ app.post('/products/user/favorites', isAuthenticated, async (req, res) => {
 
 
 const PORT = 3001
-sequelize.sync({alter: true}).then(() => { // <- alter and force set to false.
+sequelize.sync({force: false}).then(() => { // <- alter and force set to false.
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     })

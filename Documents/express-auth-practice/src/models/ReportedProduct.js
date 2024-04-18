@@ -41,20 +41,17 @@ async function sendMail(transporter, to, subject, message) {
         throw error;
     }
 };
-//
 
+// definicion de modelo
 const ReportedProduct = sequelize.define('ReportedProduct', {
     productId: {
         type: DataTypes.INTEGER,
         allowNull: false
-    }
-}, {
+    },
     userId: {
         type: DataTypes.INTEGER,
         allowNull: false
     }
-}, {
-
 });
 
 // FALTA COMPROBAR QUE FUNCIONE
