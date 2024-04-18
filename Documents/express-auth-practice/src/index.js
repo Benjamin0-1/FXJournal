@@ -9,6 +9,7 @@ const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
+const cors = require('cors');
 
 //models:
 const User = require('./models/User');
@@ -19,11 +20,13 @@ const Brand = require('./models/Brand');
 const Review = require('./models/Review');
 const Favorite = require('./models/Favorite');
 const ReportedProduct = require('./models/ReportedProduct');
+const DeletedUser = require('./models/DeletedUser');
 
 const sequelize = require('./db');
 const models = require('./models/associations');
 const crypto = require('crypto');
-// admin, unique data to each user. 
+
+app.use(cors());
 app.use(express.json());
 
 // configuracion de nodeMailer
@@ -142,7 +145,7 @@ app.get('/generate-secret', isAuthenticated, isAdmin, async (req, res) => {
 });
 
 //generar codigo QR para agregarlo a la app.
-app.post('/generate-qr-code', (req, res) => {
+app.post('/generate-qr-code', isAuthenticated, (req, res) => {
     const secret = req.body.secret;
     if (!secret) {return res.status(400).json('Faltan datos')};
 
@@ -229,80 +232,78 @@ async function isAdmin(req, res, next) {
 
 //to generate reset token for forgotten password.
 function generateToken() {
-    return crypto.randomBytes(20).toString('hex')
+    return crypto.randomBytes(20).toString('hex');
+    const expirationDate = Date.now() + (10 * 60 * 1000);
+    return {token, expirationDate}
 };
 
 // function must also send a token/code with an exp date so that certain users can access this page/route to reset password.
-app.post('/reset-password-request', isAuthenticated, async (req, res) => { 
-    const email = req.body.email;
+app.post('/reset-password-request', isAuthenticated, async (req, res) => {
+    const { email } = req.body;
+
     if (!email) {
-        return res.status(400).json('Missing email'); // <-- nodeMailer. Funciona correctamente.
+        return res.status(400).json({ message: 'Missing email' });
     }
 
     try {
-        const resetToken = generateToken();
-        const currentTime = Date.now();
-        console.log(currentTime);
-        const expirationDate = currentTime + (10 * 60 * 1000); 
+        const user = await User.findOne({ where: { email } });
 
-        
-        if (Date.now() >= expirationDate) {
-            return res.json('Reset code/token Expired.');
-        }
-
-        // Save reset token and expiration date to the request object
-        req.resetToken = resetToken;
-        req.resetTokenExpiration = expirationDate;
-
-        //email de cambio de password. 
-        /*
-        const subject = 'Reset Password Request';
-        const text = `Your reset password token is: ${resetToken}`;
-        await sendMail(email, subject, text);
-        console.log(`Email sent to: `);  */
-
-        const transporter = await initializeTransporter();
-        await sendMail(transporter, email, 'Cambio de contraseña', `Tu codigo secreto es: ${resetToken} y
-        expira dentro de 10 minutos. No lo compartas con nadie.`);
-
-        console.log(`Reset token sent to user: ${req.user.userId} con email: ${email}`);
-
-        return res.status(200).json({ resetToken, expirationDate });
-    } catch (error) {
-        return res.status(500).json(`Internal Server Error: ${error}`);
-    }
-});
-
-
-// this route must verify the code so that only users who requested a password reset can access it. 
-// this route must reset the password.
-app.post('/reset-password', isAuthenticated, async (req, res) => {
-    const userId = req.user.userId;
-    const resetToken = req.body.resetToken; // Get reset token from request body
-    const newPassword = req.body.newPassword;
-    const confirmNewPassword = req.body.confirmNewPassword;
-
-    if (!resetToken) {
-        return res.status(400).json('Missing reset token');
-    }
-
-    // Check if reset token has expired
-    if (req.resetTokenExpiration < Date.now()) {
-        return res.status(401).json('Expired reset token');
-    }
-
-    if (!newPassword || !confirmNewPassword || newPassword !== confirmNewPassword) {
-        return res.status(400).json('Credentials must be provided and must also match.');
-    }
-
-    try {
-        const user = await User.findByPk(userId);
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        const resetToken = generateToken();
+        const tokenExpiration = new Date();
+        tokenExpiration.setHours(tokenExpiration.getHours() + 1); // Expires in 1 hour
+
+        await user.update({ password_reset_token: resetToken, password_reset_token_expires: tokenExpiration });
+
+        const transporter = await initializeTransporter();
+        const subject = 'password reset'
+
+        await sendMail(transporter, email, subject, resetToken);
+
+        console.log(`Reset token sent to user with email: ${email}`);
+        console.log(`reset token: ${resetToken}`);
+
+        return res.status(200).json({ resetToken, expirationDate: tokenExpiration });
+    } catch (error) {
+        console.error('Error resetting password:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+
+// this route must verify the code so that only users who requested a password reset can access it. 
+app.post('/reset-password', isAuthenticated, async (req, res) => {
+    const userId = req.user.userId;
+    const resetToken = req.body.resetToken;
+    
+    const newPassword = req.body.newPassword;
+    const confirmNewPassword = req.body.confirmNewPassword;
+
+    if (!resetToken) {
+        return res.status(400).json({ message: 'Missing reset token' });
+    }
+
+    try {
+        const user = await User.findByPk(userId);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        if (user.password_reset_token !== resetToken || user.password_reset_token_expires < new Date()) {
+            return res.status(400).json({ message: 'Invalid or expired reset token.' });
+        }
+
+        if (!newPassword || !confirmNewPassword || newPassword !== confirmNewPassword) {
+            return res.status(400).json({ message: 'Credentials must be provided and must also match.' });
+        }
+
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        await user.update({ password: hashedPassword });
+        await user.update({ password: hashedPassword, password_reset_token: null, password_reset_token_expires: null });
 
         return res.status(200).json({ message: 'Password reset successful.' });
     } catch (error) {
@@ -313,8 +314,7 @@ app.post('/reset-password', isAuthenticated, async (req, res) => {
 
 
 
-
-app.put('/users/grant-admin/:id', isAuthenticated, async(req, res) => {
+app.put('/users/grant-admin/:id', isAuthenticated, async(req, res) => { // debe utilizar isAdmin luego de que exista el primer admin.
     const id = req.params.id;
     if (!id) {
         return res.status(400).json('Must provide an id');
@@ -417,6 +417,13 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
     const password = req.body.password;
 
     try {
+        
+        //revisar el blacklist DeletedUser
+        const blackListedUsername = await DeletedUser.findOne({where: {username}});
+        if (blackListedUsername) {
+            return res.status(403).json({message: 'Error, Tu cuenta ha sido eliminada.', userHasBeenDeleted: true});
+        };
+
         const user = await User.findOne({ where: { username } });
         if (!user) {
             return res.status(404).json({ message: `Username ${username} Not Found` });
@@ -437,30 +444,6 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
     }
 });
 
-/*
-// crear cuenta. <-- enviar email de bienvenida a usuario
-app.post('/signup', async(req, res) => {
-    const {username, confirmUsername, password, confirmPassword} = req.body;
-    if (!username || !confirmUsername || !password || !confirmPassword) {
-        return res.status(400).json('Missing data');
-    };
-
-    try {
-        const checkUserExists = await User.findOne({where: {username: username}});
-        if (checkUserExists) {return res.json(`Username ${username} already exists`)};
-        
-        if (username === confirmUsername && password && confirmPassword) {
-            const hashedPassword = await bcrypt.hash(password, 10)
-            const newUser = await User.create({username, password: hashedPassword});
-            return res.status(201).json(`Username: ${newUser.username} created successfully`);
-        } else {
-            res.status(400).json({message: 'fields must match'})
-        }
-    } catch (error) {
-        res.status(500).json(`Internal Server Error: ${error.message}`);
-    }
-}); */
-
 // ruta actualizada: incluye email e email de bienvenida enviado automaticamente, tambien regex para confirmar email.
 // username and email must both be unique
 app.post('/signup', async(req, res) => {
@@ -478,8 +461,22 @@ app.post('/signup', async(req, res) => {
 
 
     try {
+        // revisar contra el blacklist de DeletedUser.
+
+        const blackListedUsername = await DeletedUser.findOne({where: {username}});
+        const blackListedEmail = await DeletedUser.findOne({where: {email}});
+        if (blackListedUsername || blackListedEmail) {
+            return res.status(403).json({forbiddenMessage: 'Tu cuenta ya ha sido eliminada'});
+        };
+
         const checkUserExists = await User.findOne({where: {username: username}});
-        if (checkUserExists) {return res.json(`Username ${username} already exists`)};
+        if (checkUserExists) {
+            return res.status(400).json({
+                message: `Username ${username} already exists`,
+                usernameAlreadyExists: true
+            });
+        }
+       
         
         if (username === confirmUsername && email === confirmEmail && password === confirmPassword) {
             const hashedPassword = await bcrypt.hash(password, 10)
@@ -872,7 +869,8 @@ app.get('/searchproduct/:productname', async(req, res) => {
     }
 });
 
-app.delete('/deleteuser/:id', isAuthenticated, isAdmin, async(req, res) => {
+// admin puede eliminar usuario por su id.
+app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async(req, res) => {
     const id = req.params.id;
     if (!id) {
         return res.status(400).json('Falta id');
@@ -881,8 +879,19 @@ app.delete('/deleteuser/:id', isAuthenticated, isAdmin, async(req, res) => {
     try {
         const userToDelete = await User.findByPk(id);
         if (!userToDelete) {
-            return res.status(404).json(`No user with ID: ${id} was found.`);
+            return res.status(404).json({
+                message: `No user with ID: ${id} was found.`,
+                noUserIdFound: true
+            });
+            
         } else {
+
+            // user username y user email
+            const userEmailToBan = userToDelete.email;
+            const userUsernameToBan = userToDelete.username;
+            // agregarlos a DeletedUser.
+            await DeletedUser.create({userId: userToDelete, username: userUsernameToBan, email: userEmailToBan});
+
             await userToDelete.destroy();
             return res.status(201).json(`Usuario con ID: ${id} eliminado con exito`);
         }
@@ -894,7 +903,7 @@ app.delete('/deleteuser/:id', isAuthenticated, isAdmin, async(req, res) => {
 // cuando un usuario es eliminado, deberian recibir un email incluyendo la razon de su eliminacion.
 
 // admin puede eliminar usuario por su username (unico)
-app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) => {
+app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) => { // testeada y FUNCIONA.
     const username = req.params.username;
     if (!username) {
         return res.status(400).json('Debe incluir un nombre de usuario');
@@ -908,6 +917,14 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) =>
         if (!userToDelete) {
             return res.status(404).json(`No se ha encontrado el usuario: ${username}`);
         } else {
+            // usuario encontrado, antes de eliminar, primera agregarlo a DeletedUser
+
+            // first find the id belonging to that username and also ban that.
+            const userIdToBan = userToDelete.id;
+            const userEmailToBan = userToDelete.email;
+
+            await DeletedUser.create({userId: userIdToBan, username, email: userEmailToBan});
+
             await userToDelete.destroy();
             return res.status(201).json(`Usuario: ${username} eliminado con exito`);
         }
@@ -930,6 +947,14 @@ app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async(req, res)
             where: {email}
         });
         if (userToDelete) {
+
+            // user id
+            const userIdToBan = userToDelete.id; 
+            const userUsernameToBan = userToDelete.username;
+
+            // si el usuario se encuntra entonces agregarlo a DeletedUser.
+            await DeletedUser.create({userId: userIdToBan, username: userUsernameToBan, email});
+
             await User.destroy({
                 where: {email}
             });
@@ -951,7 +976,7 @@ app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async(req, res)
 // ruta para que un usuario puede eliminar SU PROPIA CUENTA.    
 app.delete('/delete/user', isAuthenticated, async (req, res) => {
     const userId = req.user.userId;
-
+// esta no necesita ser baneada ya que el usuario no ha roto las reglas, simplemente ha decidido dejar el sitio de manera permanente.
     try {
         await User.destroy({
             where: {
@@ -1093,6 +1118,8 @@ app.get('/searchbypricerange/:start/:end', async(req, res) => {
     }
 });
 
+
+// ruta para combinar muchos filtros.
 
 // when an admin deletes a product, users should know. nodeMailer
 app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {

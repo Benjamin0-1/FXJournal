@@ -9,6 +9,7 @@ const User = sequelize.define('User', {
     },
     email: {
         type: DataTypes.STRING,
+        unique: true,
         allowNull: false
     },
     password: {
@@ -32,6 +33,16 @@ const User = sequelize.define('User', {
         type: DataTypes.STRING,
         unique: true
     },
+    
+    password_reset_token: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true
+    },
+    password_reset_token_expires: {
+        type: DataTypes.DATE,
+        allowNull: true
+    }
 });
 
 //User.hasMany(Products) <- if you want to describe User and get the products that belong to a specific user.
