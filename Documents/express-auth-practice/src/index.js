@@ -11,6 +11,9 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const cors = require('cors');
 
+//importar la configuracion de passport.
+//const passportGoogleStrategy = require('./Passport')
+
 //models:
 const User = require('./models/User');
 const Product = require('./models/Product');
@@ -223,6 +226,7 @@ function generateToken() {
     return {token, expirationDate}
 };
 
+// ESTO NO TIENE EFECTO EN USUARIOS DE GOOGLE.
 // function must also send a token/code with an exp date so that certain users can access this page/route to reset password.
 app.post('/reset-password-request', isAuthenticated, async (req, res) => {
     const { email } = req.body;
@@ -260,7 +264,7 @@ app.post('/reset-password-request', isAuthenticated, async (req, res) => {
 });
 
 
-
+// NO TIENE EFECTO EN USUARIOS DE GOOGLE.
 // this route must verify the code so that only users who requested a password reset can access it. 
 app.post('/reset-password', isAuthenticated, async (req, res) => {
     const userId = req.user.userId;
@@ -361,29 +365,27 @@ app.post('/access-token', async (req, res) => {
         return res.status(401).json({ message: 'No refresh token provided.' });
     }
 
-    // Check if refreshToken is banned
     if (await isTokenBanned(refreshToken)) {
         return res.status(403).json({ message: 'Refresh token has been banned' });
     }
 
-    // Verify refreshToken
     jwt.verify(refreshToken, 'refresh-secret', (error, decoded) => {
         if (error) {
-            console.error('Error verifying refresh token:', error); // Debugging statement
+            console.error('Error verifying refresh token:', error); // Debugging 
             return res.status(401).json({ message: 'Invalid refresh token.' });
         }
 
-        console.log('Decoded:', decoded); // Debugging statement
+        console.log('Decoded:', decoded); // Debugging
 
-        // Generate a new access token
+ 
         const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '20m' });
 
-        console.log('New Access Token:', accessToken); // Debugging statement
+        console.log('New Access Token:', accessToken); // Debugging 
 
-        // Add the new access token to the banned tokens
+      
         BannedToken.create({ token: accessToken })
             .then(() => {
-                // Send the new access token in the response
+                // envia nuevo access token.
                 res.json({ accessToken });
             })
             .catch((error) => {
@@ -421,7 +423,7 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         }
 
         // Generate new tokens
-        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' }); // era: 10m.
+        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' }); 
         const refreshToken = jwt.sign({ userId: user.id, username: user.username }, 'refresh-secret', { expiresIn: '15d' });
 
         res.json({ message: 'Login successful', accessToken, refreshToken });
@@ -466,9 +468,9 @@ app.post('/logout', isAuthenticated, async(req, res) => {
 // username and email must both be unique
 app.post('/signup', async(req, res) => {
 
-    const {username, confirmUsername, email, confirmEmail, password, confirmPassword} = req.body;
+    const {firstName, lastName, username, confirmUsername, email, confirmEmail, password, confirmPassword} = req.body;
 
-    if (!username || !confirmUsername || !email || !confirmEmail || !password || !confirmPassword) {
+    if (!firstName || !lastName || !username || !confirmUsername || !email || !confirmEmail || !password || !confirmPassword) {
         return res.status(400).json('Missing data');
     };
 
@@ -498,7 +500,7 @@ app.post('/signup', async(req, res) => {
         
         if (username === confirmUsername && email === confirmEmail && password === confirmPassword) {
             const hashedPassword = await bcrypt.hash(password, 10)
-            const newUser = await User.create({username, email, password: hashedPassword});
+            const newUser = await User.create({first_name: firstName, last_name: lastName, username, email, password: hashedPassword});
 
             // SEND WELCOME EMAIL HERE.
             const transporter = await initializeTransporter();
@@ -515,21 +517,22 @@ app.post('/signup', async(req, res) => {
 });
 
 // PROFILE:
-app.get('/profile-info', isAuthenticated, isAdmin, async(req, res) => {
+app.get('/profile-info', isAuthenticated, async(req, res) => {
     const userId = req.user.userId;
     try {
         const userProfileData = await User.findOne({
             where: {
                 id: userId
-            }
+            },
+            attributes: { exclude: ['password', 'otp_secret', 'password_reset_token', 'password_reset_token_expires', 'id', 'google_id'] }
         });
-
+        // aqui no se envian ciertos valores por motivos de seguridad.
         res.json(userProfileData)
 
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
     }
-})
+});
 
 // ruta para crear review, un usuario solamente puede escribir una review de un producto una vez.
 app.post('/review', isAuthenticated, async (req, res) => {
@@ -729,6 +732,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             attributes, 
             salePrice, 
             featured, 
+            // IMAGE    <-- 
             categoryNames
         } = req.body;
 

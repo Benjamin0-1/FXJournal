@@ -2,6 +2,14 @@ const { Sequelize, DataTypes } = require('sequelize');
 const sequelize = require('../db');
 
 const User = sequelize.define('User', {
+    first_name: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    last_name: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
     username: {
         type: DataTypes.STRING,
         allowNull: false,
@@ -42,7 +50,14 @@ const User = sequelize.define('User', {
     password_reset_token_expires: {
         type: DataTypes.DATE,
         allowNull: true
-    }
+    },
+    // para almecenar a los usuarios de Google.
+    
+    google_id: {
+        type: DataTypes.STRING,
+        allowNull: true, // PUEDE SER NULL PARA USUARIOS LOCALES.
+        unique: true 
+    } 
 });
 
 //User.hasMany(Products) <- if you want to describe User and get the products that belong to a specific user.
