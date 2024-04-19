@@ -421,7 +421,7 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         }
 
         // Generate new tokens
-        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '20m' }); // era: 10m.
+        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' }); // era: 10m.
         const refreshToken = jwt.sign({ userId: user.id, username: user.username }, 'refresh-secret', { expiresIn: '15d' });
 
         res.json({ message: 'Login successful', accessToken, refreshToken });
@@ -513,6 +513,23 @@ app.post('/signup', async(req, res) => {
         res.status(500).json(`Internal Server Error: ${error.message}`);
     }
 });
+
+// PROFILE:
+app.get('/profile-info', isAuthenticated, isAdmin, async(req, res) => {
+    const userId = req.user.userId;
+    try {
+        const userProfileData = await User.findOne({
+            where: {
+                id: userId
+            }
+        });
+
+        res.json(userProfileData)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+})
 
 // ruta para crear review, un usuario solamente puede escribir una review de un producto una vez.
 app.post('/review', isAuthenticated, async (req, res) => {
@@ -705,13 +722,11 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             brandId,
             product, 
             stock, 
-            rating, 
             price, 
             description, 
             brand, 
             tags, 
             attributes, 
-            reviews, 
             salePrice, 
             featured, 
             categoryNames
@@ -726,13 +741,11 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             brandId,
             product,
             stock,
-            rating,
             price, 
             description,
             brand,
             tags,
             attributes,
-            reviews,
             salePrice,
             featured,
             userId // Include userId
@@ -764,6 +777,60 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
         
 
         res.status(201).json({ message: `Product added successfully`, product: createdProduct });
+    } catch (error) {
+        res.status(500).json({ error: `Internal Server Error: ${error.message}` });
+    }
+});
+
+// ACTUALIZAR PRODUCTO EXISTENTE. Hasta ahora funciona.
+app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) => {
+    const userId = req.user.userId;
+    const productId = req.params.productId;
+    const {
+        brandId,
+        product,
+        stock,
+        price,
+        description,
+        brand,
+        tags,
+        attributes,
+        featured,
+        categoryNames
+    } = req.body;
+
+    try {
+        const existingProduct = await Product.findOne({where: {id: productId}}) // o findByPk.
+        if (!existingProduct) {
+            return res.status(404).json({ message: `Product with ID ${productId} not found` });
+        }
+
+        // si no pasan nada, seguiran tal cual como estaban.
+        const updatedProduct = await existingProduct.update({
+            brandId: brandId || existingProduct.brandId,
+            product: product || existingProduct.product,
+            stock: stock || existingProduct.stock,
+            price: price || existingProduct.price,
+            description: description || existingProduct.description,
+            brand: brand || existingProduct.brand,
+            tags: tags || existingProduct.tags,
+            attributes: attributes || existingProduct.attributes,
+            featured: featured || existingProduct.featured
+        });
+
+        // en caso de ingresar categorias. 
+        if (categoryNames && categoryNames.length > 0) {
+            const categories = await Promise.all(categoryNames.map(async(categoryData) => {
+                let category = await Category.findOne({ where: { category: categoryData.name } });
+                if (!category) {
+                    category = await Category.create({ category: categoryData.name, description: categoryData.description });
+                }
+                return category;
+            }));
+            await updatedProduct.setCategories(categories);
+        }
+
+        res.json({ message: `Product with ID ${productId} updated successfully`, product: updatedProduct });
     } catch (error) {
         res.status(500).json({ error: `Internal Server Error: ${error.message}` });
     }
@@ -1206,6 +1273,29 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
         res.json(`Producto con id: ${id} eliminado con éxito`);
     } catch (error) {
         console.error('Error al eliminar el producto y notificar a los usuarios:', error);
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+// ELIMINAR PRODUCTO POR SU NOMBRE (case sensitive).
+app.delete('/product/delete/name', isAuthenticated, isAdmin, async(req, res) => {
+    const userId = req.user.userId;
+    const productName = req.body.productName;
+
+    if (!productName) {
+        return res.status(400).json('Debe incluir el nombre del producto a eliminar');
+    }    
+
+    try {
+        const productToDelete = await Product.findOne({
+            where: {product: productName}
+        });
+        if (!productToDelete) {return res.status(404).json({message: `no existo producto con nombre: ${productName}`, productNotFound: true})};
+        
+        await Product.destroy({where: {product: productName}});
+
+        res.json({message: `Producto con nombre ${productName} eliminado comn exito`, productDeleted: true});
+    } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`);
     }
 });
