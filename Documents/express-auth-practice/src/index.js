@@ -125,6 +125,89 @@ app.post('/verify', isAuthenticated, async (req, res) => {
     }
 });
 
+// STRIPE TESTING:
+
+
+
+
+
+const stripe = require('stripe')('sk_test_51P7RX608Xe3eKAmZLRdLEZqVedzK4Cv6EJks2vZg0qpjIxobSBvDXFJPUJE4wumqsOSuU1FMxzEyWEsXTZnIJEU000Spkdfy3x');
+
+// this works, now just make sure to add the authentication on top of it.
+app.post('/create-checkout-session', async (req, res) => {
+    const products = req.body.products;
+
+    let transaction;
+
+    try {
+
+        // Start a transaction
+        transaction = await sequelize.transaction(); 
+        
+        const items = [];
+        const outOfStockProducts = [];
+
+        for (const product of products) {
+            const productFromDB = await Product.findByPk(product.id, { transaction });
+
+            if (!productFromDB) {
+                await transaction.rollback();
+                return res.status(400).json({ error: `Product with ID ${product.id} not found.` });
+            }
+
+            if (product.quantity > productFromDB.stock) {
+                await transaction.rollback();
+                outOfStockProducts.push(productFromDB.name);
+                return res.status(400).json({ error: `Product ${productFromDB.name} is out of stock.` });
+            }
+
+            // Update the stock quantity
+            productFromDB.stock -= product.quantity;
+            await productFromDB.save({ transaction });
+
+            // Add the product to the checkout session items
+            items.push({
+                price_data: {
+                    currency: 'usd',
+                    product_data: {
+                        name: productFromDB.product, // Include the name field here
+                        images: productFromDB.image ? [productFromDB.image] : [],
+                    },
+                    unit_amount: productFromDB.price * 100, // Stripe expects the amount in cents
+                },
+                quantity: product.quantity
+            });
+        
+        }
+
+        // Commit the transaction if all products are valid and stock is updated successfully
+        await transaction.commit();
+
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: items, // Ensure line_items parameter is included
+            mode: 'payment',
+            success_url: 'https://www.google.com/url?sa=i&url=https%3A%2F%2Fpaymentsplugin.com%2Fblog%2Fstripe-payment-links%2F&psig=AOvVaw2JdbmUZkyDwkvbrFaC6RBL&ust=1713664957909000&source=images&cd=vfe&opi=89978449&ved=0CBIQjRxqFwoTCPiT4s3Zz4UDFQAAAAAdAAAAABAEs', // Replace with your actual success URL
+            cancel_url: 'https://checkout.stripe.com/pay/failure', // Replace with your actual cancel URL
+        });
+
+        res.json({ id: session.id });
+    } catch (error) {
+        console.error('Error creating checkout session:', error);
+        if (transaction) {
+            await transaction.rollback();
+        }
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
+
+
+
+
+// :END OF STRIPE TESTING 
+
 
 
 //ruta para generar secret key. Se puede utilizar codigo para agregar manualmente en caso de no poder escanear QR.
@@ -324,6 +407,24 @@ app.put('/users/grant-admin/:id', isAuthenticated, async(req, res) => { // debe 
     } catch (error) {
         console.error('Error granting admin privileges:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// ruta para que un admin pueda ver todos los datos de un usuario especifico
+app.get('/users/info/details/:username', isAuthenticated, isAdmin, async(req, res) => {
+    const username = req.params.username;
+    if (!username) {return res.status(400).json('Debe incluir el nombre de usuario a buscar.')};
+
+    try {
+        const userDetails = await User.findOne({
+            where: {username: username}
+        }); 
+        if (!username) {return res.status(404).json(`Usuario: ${username} no encontrado`)};
+
+        res.json(userDetails)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
     }
 });
 
