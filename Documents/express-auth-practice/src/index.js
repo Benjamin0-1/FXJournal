@@ -125,6 +125,9 @@ app.post('/verify', isAuthenticated, async (req, res) => {
     }
 });
 
+
+
+
 // STRIPE TESTING:
 
 
@@ -479,11 +482,11 @@ app.post('/access-token', async (req, res) => {
         console.log('Decoded:', decoded); // Debugging
 
  
-        const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '20m' });
+        const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
 
         console.log('New Access Token:', accessToken); // Debugging 
 
-      
+       //bug en el front (/allusers usando FetchWithAuth). ha sido arreglado.
         BannedToken.create({ token: accessToken })
             .then(() => {
                 // envia nuevo access token.
@@ -492,7 +495,7 @@ app.post('/access-token', async (req, res) => {
             .catch((error) => {
                 console.error('Error adding access token to banned tokens:', error);
                 res.status(500).json({ message: 'Internal server error' });
-            });
+            }); 
     });
 });
 
@@ -694,7 +697,7 @@ app.delete('/review/:reviewId', isAuthenticated, async (req, res) => {
 });
 
 
-///ruta para ver todas las reviews que un usuario ha escrito. Posible bug (resultado siempre es: 1)
+///ruta para ver todas las reviews que un usuario ha escrito. un usuario solo puede dejar una review por producto. 
 app.get('/user/reviews', isAuthenticated, async (req, res) => {
     const userId = req.user.userId;
     console.log(`User id: ${userId}`);
@@ -828,7 +831,6 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             stock, 
             price, 
             description, 
-            brand, 
             tags, 
             attributes, 
             salePrice, 
@@ -848,7 +850,6 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
             stock,
             price, 
             description,
-            brand,
             tags,
             attributes,
             salePrice,
@@ -883,7 +884,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
 
         res.status(201).json({ message: `Product added successfully`, product: createdProduct });
     } catch (error) {
-        res.status(500).json({ error: `Internal Server Error: ${error.message}` });
+        res.status(500).json({ error: `Internal Server Error: ${error}` });
     }
 });
 
@@ -897,7 +898,7 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
         stock,
         price,
         description,
-        brand,
+        //brand,
         tags,
         attributes,
         featured,
@@ -917,7 +918,7 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
             stock: stock || existingProduct.stock,
             price: price || existingProduct.price,
             description: description || existingProduct.description,
-            brand: brand || existingProduct.brand,
+           // brand: brand || existingProduct.brand,
             tags: tags || existingProduct.tags,
             attributes: attributes || existingProduct.attributes,
             featured: featured || existingProduct.featured
@@ -938,6 +939,28 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
         res.json({ message: `Product with ID ${productId} updated successfully`, product: updatedProduct });
     } catch (error) {
         res.status(500).json({ error: `Internal Server Error: ${error.message}` });
+    }
+});
+
+// se utiliza en UpdateProduct Component. 
+app.get('/product-detail/:id', async(req, res) => {
+    const id = req.params.id;
+    if (!id) {return res.status(400).json({id: false, message: 'Debe incluir id de producti'})};
+
+    try {
+        
+        const productDetail = await Product.findOne({
+            where: {id: id}
+        });
+
+        if (!productDetail) {
+            return res.status(404).json({productFound: false, message: `Producto con id: ${id} no encontrado`});
+        };
+
+        res.json(productDetail)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
     }
 });
 
@@ -1113,6 +1136,9 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async(req, res) => {
             await DeletedUser.create({userId: userToDelete, username: userUsernameToBan, email: userEmailToBan});
 
             await userToDelete.destroy();
+            
+            //AGREGAR EMAIL
+
             return res.status(201).json(`Usuario con ID: ${id} eliminado con exito`);
         }
     } catch (error) {
@@ -1137,15 +1163,14 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) =>
         if (!userToDelete) {
             return res.status(404).json(`No se ha encontrado el usuario: ${username}`);
         } else {
-            // usuario encontrado, antes de eliminar, primera agregarlo a DeletedUser
-
-            // first find the id belonging to that username and also ban that.
+           
             const userIdToBan = userToDelete.id;
             const userEmailToBan = userToDelete.email;
 
             await DeletedUser.create({userId: userIdToBan, username, email: userEmailToBan});
 
             await userToDelete.destroy();
+            // AGREGAR EMAIL
             return res.status(201).json(`Usuario: ${username} eliminado con exito`);
         }
     } catch (error) {
