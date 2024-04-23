@@ -14,7 +14,7 @@ const cors = require('cors');
 //importar la configuracion de passport.
 //const passportGoogleStrategy = require('./Passport')
 
-//models:
+//models: <-- falta revisar BannedToken y asegurarse de que no hayan bugs.
 const User = require('./models/User');
 const Product = require('./models/Product');
 const Category = require('./models/Category');
@@ -1561,16 +1561,16 @@ sequelize.sync({alter: false}).then(() => { // <- alter and force set to false.
 
 /*
 esto falta implementar.
-// Route to update categories for a product
+// actualizar categorias para un producto.
 app.put('/products/:productId/categories', async (req, res) => {
     try {
       const { productId } = req.params;
       const { categoryIds } = req.body;
   
-      // Find product by ID
+     
       const product = await Product.findByPk(productId);
   
-      // Update categories
+     
       if (product) {
         const categories = await Category.findAll({ where: { id: categoryIds } });
         await product.setCategories(categories);
@@ -1584,36 +1584,16 @@ app.put('/products/:productId/categories', async (req, res) => {
     }
   });
   
-  // Route to display categories for a product
-  app.get('/products/:productId/categories', async (req, res) => {
-    try {
-      const { productId } = req.params;
   
-      // Find product by ID with associated categories
-      const product = await Product.findByPk(productId, {
-        include: [{ model: Category, attributes: ['id', 'name'] }]
-      });
-  
-      if (product) {
-        res.json(product.Categories);
-      } else {
-        res.status(404).json({ error: 'Product not found' });
-      }
-    } catch (error) {
-      console.error('Error fetching product categories:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-  
-  // Route to remove a product from a category
+  // eliminar un producto de una categoria
   app.delete('/products/:productId/categories/:categoryId', async (req, res) => {
     try {
       const { productId, categoryId } = req.params;
   
-      // Find product by ID
+     
       const product = await Product.findByPk(productId);
   
-      // Remove category association
+      
       if (product) {
         await product.removeCategory(categoryId);
         res.json({ message: 'Product removed from category successfully' });

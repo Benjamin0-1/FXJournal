@@ -1,5 +1,6 @@
 const { Sequelize, DataTypes } = require('sequelize');
 const sequelize = require('../db');
+const PaymentHistory = require('./PaymentHistory');
 
 const User = sequelize.define('User', {
     first_name: {
@@ -60,7 +61,15 @@ const User = sequelize.define('User', {
     } 
 });
 
-//User.hasMany(Products) <- if you want to describe User and get the products that belong to a specific user.
+
+// FALTA PROBAR ESTO.
+User.beforeDestroy(async (user, options) => {
+    try {
+        await PaymentHistory.destroy({ where: { userId: user.id } });
+    } catch (error) {
+        console.error('Error deleting associated payment history:', error);
+    }
+});
 
 module.exports = User;
 
