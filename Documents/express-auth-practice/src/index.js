@@ -28,6 +28,7 @@ const DeletedUser = require('./models/DeletedUser');
 const sequelize = require('./db');
 const models = require('./models/associations');
 const crypto = require('crypto');
+const PaymentHistory = require('./models/PaymentHistory');
 
 app.use(cors());
 app.use(express.json());
@@ -136,20 +137,24 @@ app.post('/verify', isAuthenticated, async (req, res) => {
 
 const stripe = require('stripe')('sk_test_51P7RX608Xe3eKAmZLRdLEZqVedzK4Cv6EJks2vZg0qpjIxobSBvDXFJPUJE4wumqsOSuU1FMxzEyWEsXTZnIJEU000Spkdfy3x');
 
-// this works, now just make sure to add the authentication on top of it.
-app.post('/create-checkout-session', async (req, res) => {
+// debe ir asociado a un usuario
+app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
+    const userId = req.user.userId;
     const products = req.body.products;
 
     let transaction;
 
     try {
-
-        // Start a transaction
+        
         transaction = await sequelize.transaction(); 
         
         const items = [];
         const outOfStockProducts = [];
 
+       
+        const paymentHistoryData = [];
+
+       
         for (const product of products) {
             const productFromDB = await Product.findByPk(product.id, { transaction });
 
@@ -161,38 +166,49 @@ app.post('/create-checkout-session', async (req, res) => {
             if (product.quantity > productFromDB.stock) {
                 await transaction.rollback();
                 outOfStockProducts.push(productFromDB.name);
-                return res.status(400).json({ error: `Product ${productFromDB.name} is out of stock.` });
+                return res.status(400).json({ error: `Product ${productFromDB.product} is out of stock.` });
             }
 
-            // Update the stock quantity
+            
             productFromDB.stock -= product.quantity;
             await productFromDB.save({ transaction });
 
-            // Add the product to the checkout session items
+            
             items.push({
                 price_data: {
                     currency: 'usd',
                     product_data: {
-                        name: productFromDB.product, // Include the name field here
+                        name: productFromDB.product, 
                         images: productFromDB.image ? [productFromDB.image] : [],
                     },
-                    unit_amount: productFromDB.price * 100, // Stripe expects the amount in cents
+                    unit_amount: productFromDB.price * 100, // Stripe lo pone en centavos asi que se multiplica.
                 },
                 quantity: product.quantity
             });
+
         
+            paymentHistoryData.push({
+                userId: userId,
+                productId: product.id,
+                quantity: product.quantity,
+                purchaseDate: new Date() 
+            });
         }
 
-        // Commit the transaction if all products are valid and stock is updated successfully
+       
         await transaction.commit();
 
+       
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
-            line_items: items, // Ensure line_items parameter is included
+            line_items: items,
             mode: 'payment',
-            success_url: 'https://www.google.com/url?sa=i&url=https%3A%2F%2Fpaymentsplugin.com%2Fblog%2Fstripe-payment-links%2F&psig=AOvVaw2JdbmUZkyDwkvbrFaC6RBL&ust=1713664957909000&source=images&cd=vfe&opi=89978449&ved=0CBIQjRxqFwoTCPiT4s3Zz4UDFQAAAAAdAAAAABAEs', // Replace with your actual success URL
-            cancel_url: 'https://checkout.stripe.com/pay/failure', // Replace with your actual cancel URL
+            success_url: 'https://www.example.com/success', 
+            cancel_url: 'https://www.example.com/cancel', 
         });
+
+    
+        await PaymentHistory.bulkCreate(paymentHistoryData);
 
         res.json({ id: session.id });
     } catch (error) {
@@ -206,6 +222,26 @@ app.post('/create-checkout-session', async (req, res) => {
 
 
 
+// ver historial de pagos.
+app.get('/payment-history', isAuthenticated, async(req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const paymentDetails = await PaymentHistory.findAll({
+            where: {
+                userId: userId
+            }
+        });
+
+        if (paymentDetails.length === 0) {return res.status(404).json('No has comprado nada.')};
+
+        res.json(paymentDetails)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server error: ${error}`);
+    }
+
+});
 
 
 
@@ -1512,7 +1548,7 @@ app.post('/products/user/favorites', isAuthenticated, async (req, res) => {
 
 
 const PORT = 3001
-sequelize.sync({force: false}).then(() => { // <- alter and force set to false.
+sequelize.sync({alter: true}).then(() => { // <- alter and force set to false.
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     })

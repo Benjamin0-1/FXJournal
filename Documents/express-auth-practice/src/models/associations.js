@@ -5,6 +5,8 @@ const User = require('./User');
 const Brand = require('./Brand');
 const Review = require('./Review');
 const Favorite = require('./Favorite');
+const PaymentHistory = require('./PaymentHistory');
+
 // Define associations for Category model
 Product.belongsToMany(Category, { through: 'ProductCategory' });
 Category.belongsToMany(Product, { through: 'ProductCategory' });
@@ -34,6 +36,14 @@ Favorite.belongsTo(Product, {foreignKey: 'productId'});
 // User y Product tienen MUCHOS Favorite.
 User.hasMany(Favorite, {foreignKey: 'userId'});
 Product.hasMany(Favorite, {foreignKey: 'productId'});
+
+// relacion entre PaymentHistory con User y Product va aqui:
+PaymentHistory.belongsTo(User, {foreignKey: 'userId'});
+
+PaymentHistory.belongsToMany(Product, {through: 'ProductPayment'});
+Product.belongsToMany(PaymentHistory, {through: 'ProductPayment'}); 
+
+
 
 // Define associations for User model
 //User.associate = (models) => {
