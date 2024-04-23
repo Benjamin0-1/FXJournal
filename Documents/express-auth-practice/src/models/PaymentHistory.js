@@ -19,11 +19,11 @@ const PaymentHistory = sequelize.define('PaymentHistory', {
         allowNull: false,
         defaultValue: DataTypes.NOW 
     },
-    /*
+    
     total_transaction_amount: {
         type: DataTypes.FLOAT,
         allowNull: true
-    } */
+    }
 });
 
 

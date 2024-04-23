@@ -150,11 +150,10 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
         
         const items = [];
         const outOfStockProducts = [];
-
-       
+        
         const paymentHistoryData = [];
-
-       
+        let totalAmount = 0; // Initialize total amount for the transaction
+        
         for (const product of products) {
             const productFromDB = await Product.findByPk(product.id, { transaction });
 
@@ -186,16 +185,21 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
                 quantity: product.quantity
             });
 
+            
+            const subtotal = productFromDB.price * product.quantity;
+            totalAmount += subtotal;
+
         
             paymentHistoryData.push({
                 userId: userId,
                 productId: product.id,
                 quantity: product.quantity,
-                purchaseDate: new Date() 
+                purchaseDate: new Date(),
+                total_transaction_amount: subtotal 
             });
         }
 
-       
+        
         await transaction.commit();
 
        
@@ -207,7 +211,7 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
             cancel_url: 'https://www.example.com/cancel', 
         });
 
-    
+        
         await PaymentHistory.bulkCreate(paymentHistoryData);
 
         res.json({ id: session.id });
@@ -219,6 +223,7 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
 
 
 
@@ -1548,7 +1553,7 @@ app.post('/products/user/favorites', isAuthenticated, async (req, res) => {
 
 
 const PORT = 3001
-sequelize.sync({alter: true}).then(() => { // <- alter and force set to false.
+sequelize.sync({alter: false}).then(() => { // <- alter and force set to false.
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     })
