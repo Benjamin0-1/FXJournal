@@ -21,7 +21,12 @@ const Review = sequelize.define('Review', {
     review: {
         type: DataTypes.TEXT,
         allowNull: false
-    }
+    },
+    // rating, luego en las rutas se agregara logica para que sea entre 1 y 5, debe ser un float.
+  //  rating: {
+   //     type: DataTypes.FLOAT,
+   //     allowNull: true
+   // }
 });
 
 // associations.js 

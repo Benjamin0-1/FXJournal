@@ -228,6 +228,7 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
 
 
 // ver historial de pagos.
+// esto tambien se usa para verificar que un usuario haya comprado el producto del cual deja una review.
 app.get('/payment-history', isAuthenticated, async(req, res) => {
     const userId = req.user.userId;
 
@@ -516,7 +517,7 @@ app.post('/access-token', async (req, res) => {
     }
 
     if (await isTokenBanned(refreshToken)) {
-        const bannedTokens = await BannedToken.findAll(); // Get all banned tokens
+        const bannedTokens = await BannedToken.findAll(); 
 
         jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
             if (error) {
@@ -528,7 +529,7 @@ app.post('/access-token', async (req, res) => {
             // Generar nuevo token hasta entregar uno no baneado.
             do {
                 accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
-            } while (bannedTokens.some((token) => token.token === accessToken));
+            } while (bannedTokens.some((token) => token.token === accessToken));            
 
             // luego de entregarlo, banearlo
             // EL token que sera baneado no debe estar ya incluido en la base de datos, para evitar duplicate entry error.
@@ -1182,7 +1183,7 @@ app.get('/category/:name', async(req, res) => {
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
     }
-})
+});
 
 
 app.get('/searchproduct/:productname', async(req, res) => {
@@ -1618,6 +1619,49 @@ app.post('/products/user/favorites', isAuthenticated, async (req, res) => {
     }
 });
 
+// ruta para cambiar un producto de su categoria a otra. <-- falta verificar que funcione.
+app.put('/update-product-category', isAuthenticated, isAdmin, async(req, res) => {
+    const userId = req.user.userId;
+    const categoryNames = req.body.categoryNames;
+    const productId = req.body.productId;
+
+    if (!categoryNames || categoryNames.length === 0) { // se debe pasar un array por json ya que pueden ser varias categorias.
+        return res.status(400).json('Falta categorías');
+    }
+    if (!productId) {
+        return res.status(400).json('Falta ID de producto');
+    }
+
+    try {
+        const product = await Product.findByPk(productId);
+        if (!product) {
+            return res.status(404).json({ error: `Producto con ID: ${productId} no encontrado` });
+        }
+
+        for (const category of categoryNames) {
+            const categoryName = category.name;
+            const categoryDescription = category.description;
+
+            // Verify if the category exists, if not, create it
+            let existingCategory = await Category.findOne({ where: { category: categoryName } });
+            if (!existingCategory) {
+                existingCategory = await Category.create({ category: categoryName, description: categoryDescription });
+            }
+
+            // Associate the product with the category by ID
+            await product.addCategory(existingCategory.id);
+        }
+
+        res.status(200).json({ success: true, message: 'Categorías actualizadas exitosamente' });
+    } catch (error) {
+        res.status(500).json(`${error}`);
+    }
+});
+
+// ruta para que admin pueda crear un usuario manualmente.
+
+
+// ruta para que un admin pueda eliminar un producto de una categoria.
 
 const PORT = 3001
 sequelize.sync({alter: false}).then(() => { // <- alter and force set to false.
@@ -1628,30 +1672,6 @@ sequelize.sync({alter: false}).then(() => { // <- alter and force set to false.
 
 /*
 esto falta implementar.
-// actualizar categorias para un producto.
-app.put('/products/:productId/categories', async (req, res) => {
-    try {
-      const { productId } = req.params;
-      const { categoryIds } = req.body;
-  
-     
-      const product = await Product.findByPk(productId);
-  
-     
-      if (product) {
-        const categories = await Category.findAll({ where: { id: categoryIds } });
-        await product.setCategories(categories);
-        res.json({ message: 'Product categories updated successfully' });
-      } else {
-        res.status(404).json({ error: 'Product not found' });
-      }
-    } catch (error) {
-      console.error('Error updating product categories:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-  
-  
   // eliminar un producto de una categoria
   app.delete('/products/:productId/categories/:categoryId', async (req, res) => {
     try {
