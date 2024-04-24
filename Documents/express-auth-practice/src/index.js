@@ -152,7 +152,7 @@ app.post('/create-checkout-session', isAuthenticated, async (req, res) => {
         const outOfStockProducts = [];
         
         const paymentHistoryData = [];
-        let totalAmount = 0; // Initialize total amount for the transaction
+        let totalAmount = 0; 
         
         for (const product of products) {
             const productFromDB = await Product.findByPk(product.id, { transaction });
@@ -312,7 +312,7 @@ app.put('/2fa/activate', isAuthenticated, isAdmin, async(req, res) => {
 
 
 function isAuthenticated(req, res, next) {
-    const token = req.headers.authorization && req.headers.authorization.split(' ')[1]; // <- what is this doing?
+    const token = req.headers.authorization && req.headers.authorization.split(' ')[1]; // extrae el token de los headers.
     if (!token) {
         return res.status(401).json({ message: 'No token provided.' });
     }
@@ -498,47 +498,103 @@ async function checkBannedToken(req, res, next) {
     }
 
     next();
-};
+}; // <-- las unicas rutas que pueden entregar tokens son /login & /access-token .
 
 
-// route to get a new access token after it expires in 10 minutes
+// automaticamente poder generar nuevo accessToken en el lado del cliente.
+// ruta actualizada: si un token se encuentra baneado, se seguira generando hasta entregar uno que sea unico. 
+// si se intenta banear un token que ya esta en BannedToken, entonces no lo insertara y seguira generando hasta entregar uno 
+// el cual sea unico, y entregara ese al usuario al final de la ejecucion.
+// todo esto arreglo el bug de 'duplicate entry' que existia antes.
 app.post('/access-token', async (req, res) => {
-    const refreshToken = req.body.refreshToken; // User provides long-lived token as proof.
+    const refreshToken = req.body.refreshToken; // Usuario entrega refreshToken como evidencia.
 
-    // Check if refreshToken is provided
+    const allBannedTokens = await BannedToken.findAll(); // <-- to make sure the newly ban token is not banned before insertion.
+
     if (!refreshToken) {
         return res.status(401).json({ message: 'No refresh token provided.' });
     }
 
     if (await isTokenBanned(refreshToken)) {
-        return res.status(403).json({ message: 'Refresh token has been banned' });
+        const bannedTokens = await BannedToken.findAll(); // Get all banned tokens
+
+        jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
+            if (error) {
+                console.log(`Error verificando refreshToken: ${error}`);
+                return res.status(401).json({ message: 'Invalid refresh token.' });
+            }
+
+            let accessToken;
+            // Generar nuevo token hasta entregar uno no baneado.
+            do {
+                accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
+            } while (bannedTokens.some((token) => token.token === accessToken));
+
+            // luego de entregarlo, banearlo
+            // EL token que sera baneado no debe estar ya incluido en la base de datos, para evitar duplicate entry error.
+            const checkIsTokenBanned = await BannedToken.findOne({
+                where: { token: accessToken }
+            });
+
+            if (!checkIsTokenBanned) {
+                BannedToken.create({ token: accessToken })
+                    .then(() => {
+                        res.json({ accessToken });
+                    })
+                    .catch((error) => {
+                        console.error('Error adding access token to banned tokens:', error);
+                        res.status(500).json({ message: 'Internal server error' });
+                    });
+            } else {
+                console.log('Newly generated access token is already banned. Generating a new one...');
+                // If the newly generated token is already banned, recursively call the function to generate a new one
+                return generateNewAccessToken(res, decoded);
+            }
+        });
+    } else {
+        jwt.verify(refreshToken, 'refresh-secret', (error, decoded) => {
+            if (error) {
+                console.error('Error verifying refresh token:', error); // Debugging 
+                return res.status(401).json({ message: 'Invalid refresh token.' });
+            }
+
+            console.log('Decoded:', decoded); // Debugging
+
+            const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
+
+            console.log('New Access Token:', accessToken); // Debugging 
+
+            
+            BannedToken.create({ token: accessToken })
+                .then(() => {
+                    
+                    res.json({ accessToken });
+                })
+                .catch((error) => {
+                    console.error('Error adding access token to banned tokens:', error);
+                    res.status(500).json({ message: 'Internal server error' });
+                }); 
+        });
     }
-
-    jwt.verify(refreshToken, 'refresh-secret', (error, decoded) => {
-        if (error) {
-            console.error('Error verifying refresh token:', error); // Debugging 
-            return res.status(401).json({ message: 'Invalid refresh token.' });
-        }
-
-        console.log('Decoded:', decoded); // Debugging
-
- 
-        const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
-
-        console.log('New Access Token:', accessToken); // Debugging 
-
-       //bug en el front (/allusers usando FetchWithAuth). ha sido arreglado.
-        BannedToken.create({ token: accessToken })
-            .then(() => {
-                // envia nuevo access token.
-                res.json({ accessToken });
-            })
-            .catch((error) => {
-                console.error('Error adding access token to banned tokens:', error);
-                res.status(500).json({ message: 'Internal server error' });
-            }); 
-    });
 });
+
+// Helper function to generate a new access token recursively
+// esta funcion NO esta en uso.
+async function generateNewAccessToken(res, decoded) {
+    const accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
+
+    try {
+        // Store the new access token
+        await BannedToken.create({ token: accessToken });
+        // Send the new access token
+        res.json({ accessToken });
+    } catch (error) {
+        console.error('Error adding access token to banned tokens:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+
 
 app.get('/test/admin', isAuthenticated, isAdmin, (req, res) => {
     res.json('you are an admin')
@@ -589,19 +645,18 @@ app.post('/logout', isAuthenticated, async(req, res) => {
         if (!refreshToken) {
             return res.status(400).json('Debe incluir refresh token');
         }
-       // accessToken.replace(''); remove access token from the user.
-        
-        // Verify refresh token
+      
+       
         jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
             if (error) {
                 return res.status(401).json({ message: 'Invalid refresh token.' });
             }
             
-            // Both tokens are valid, ban them
+          
             await BannedToken.create({ token: accessToken });
             await BannedToken.create({ token: refreshToken });
 
-            // Send response after both tokens are banned
+         
             res.json({ logOutSuccessful: true, message: 'Logout successful' });
         });
     } catch (error) {
@@ -680,6 +735,7 @@ app.get('/profile-info', isAuthenticated, async(req, res) => {
 });
 
 // ruta para crear review, un usuario solamente puede escribir una review de un producto una vez.
+// EXTRA: <-- implementar logica extra para que un usuario haya comprado el product (PaymentHistory) antes de poder ßdejar una review del mismo
 app.post('/review', isAuthenticated, async (req, res) => {
     const userId = req.user.userId;
     const { productId, review } = req.body;
@@ -708,6 +764,16 @@ app.post('/review', isAuthenticated, async (req, res) => {
         if (!product) {
             return res.status(404).json('Id de producto no encontrado.');
         }
+
+        // revisar que el usuario haya adquirido el producto antes de que pueda dejar una review del mismo.
+        const purchaseRecord = await PaymentHistory.findOne({
+            where: {
+                userId: userId,
+                productId: productId
+            }
+        });
+
+        if (!purchaseRecord) {return res.status(400).json(`Debes comprar el producto con id: ${productId} antes de poder dejar una review.`)};
 
         const createdReview = await Review.create({ productId, userId, review });
         res.status(201).json({ message: 'Review creada con éxito', review: createdReview });
@@ -787,7 +853,8 @@ app.get('/my-reviews', isAuthenticated, async(req, res) => {
 
     try {
         const allReviews = await Review.findAll({
-            where: {userId: userId}
+            where: {userId: userId},
+            attributes: {exclude: ['userId']} // <-- usuario no pueden ver su ID. 
         });
         if (allReviews.length === 0) {return res.status(404).json('No reviews available')};
         res.json({reviewCount: allReviews.length ,allReviews})
